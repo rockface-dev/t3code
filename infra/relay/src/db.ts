@@ -49,9 +49,9 @@ export const PlanetscaleDatabase = Effect.gen(function* () {
       ? yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
           name: "t3coderelay",
           region: { slug: "us-west" },
-          clusterSize: "PS_160",
+          clusterSize: "PS_5",
           migrations: { dir: schema.out, table: "relay_migrations" },
-          replicas: 2,
+          replicas: 0,
         }).pipe(RemovalPolicy.retain())
       : yield* Planetscale.PostgresDatabase.ref("RelayPostgresDatabase", {
           stage: "prod",
@@ -80,6 +80,6 @@ export const RelayHyperdrive = Effect.gen(function* () {
     caching: {
       disabled: true,
     },
-    originConnectionLimit: 40,
+    originConnectionLimit: 20,
   });
 });
