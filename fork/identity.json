@@ -1,0 +1,16 @@
+{
+  "$comment": "Values this fork changes in upstream pingdotgg/t3code. fork/apply.ts writes them into a fresh upstream checkout. Values still equal to upstream's are placeholders until the domain and Apple details exist.",
+  "domain": "t3.codes",
+  "releaseRepository": "rockface-dev/t3code",
+  "telemetryEnabledByDefault": false,
+  "desktopAppId": "com.t3tools.t3code",
+  "mobile": {
+    "bundleIdentifier": "com.t3tools.t3code",
+    "appleTeamId": "ARK85ZXQ4Z"
+  },
+  "relay": {
+    "postgresClusterSize": "PS_5",
+    "postgresReplicas": 0,
+    "hyperdriveOriginConnectionLimit": 20
+  }
+}

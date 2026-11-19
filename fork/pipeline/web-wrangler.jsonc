@@ -1,0 +1,10 @@
+// Cloudflare Workers static assets for the hosted web app. Deploy from artifacts/<version>/:
+//   wrangler deploy --config wrangler.jsonc --domain app.<domain>
+{
+  "name": "t3fork-web",
+  "compatibility_date": "2026-11-08",
+  "assets": {
+    "directory": "./web",
+    "not_found_handling": "single-page-application",
+  },
+}
