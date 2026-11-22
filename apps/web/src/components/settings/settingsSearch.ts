@@ -1,4 +1,4 @@
-import { HOSTED_APP_CHANNEL } from "~/branding";
+import { HOSTED_APP_CHANNEL, MOBILE_APP_PUBLISHED } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
@@ -1684,6 +1684,7 @@ export function settingsForThisPlatform(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
+      (MOBILE_APP_PUBLISHED || item.id !== "mobile-app") &&
       (!item.macOnly || isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );
