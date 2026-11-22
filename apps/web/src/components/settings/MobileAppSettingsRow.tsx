@@ -1,5 +1,6 @@
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 
+import { MOBILE_APP_PUBLISHED } from "~/branding";
 import { AndroidIcon, AppleIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
@@ -26,6 +27,7 @@ export function MobileAppSettingsRow() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
+  if (!MOBILE_APP_PUBLISHED) return null;
   return (
     <SettingsRow
       {...searchableSetting("mobile-app")}

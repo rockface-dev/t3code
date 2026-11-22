@@ -18,6 +18,7 @@ import {
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
+import { MOBILE_APP_PUBLISHED } from "~/branding";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 
@@ -765,6 +766,12 @@ it("says the phone is set up only once this computer is shared with the signed-i
   );
   state.linkError = "Could not read T3 Connect link state.";
   await using _screen = await mountWelcome();
+  if (!MOBILE_APP_PUBLISHED) {
+    // This build hides the Phone section until its own mobile app ships.
+    expect(pageText()).not.toContain("Use T3 Code on your phone");
+    expect(() => button("Set up")).toThrow("Missing button: Set up");
+    return;
+  }
   await click("Set up");
   // A failed read says so instead of asking to share the computer again.
   await vi.waitFor(() => expect(pageText()).toContain("Could not check T3 Connect."));
