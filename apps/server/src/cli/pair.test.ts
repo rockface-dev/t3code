@@ -37,7 +37,7 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { resolveHostCliCommand } from "./invocation.ts";
+import { hostShellWord, resolveHostCliCommand } from "./invocation.ts";
 import {
   DevServerNotProxiableError,
   resolveTailscaleLocalTarget,
@@ -498,11 +498,62 @@ describe("t3 pair", () => {
           ]);
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
+            // Fork: no npm package, so no `npx t3@<version>`; the hint installs that version.
+            const rendered = String(Cause.squash(exit.cause));
+            const baseDirArgs = ["--base-dir", baseDir];
+            const update = yield* resolveHostCliCommand("update", [...baseDirArgs, "0.0.45"]);
+            const pair = yield* resolveHostCliCommand("pair", baseDirArgs);
             assert.include(
-              String(Cause.squash(exit.cause)),
-              `t3@0.0.45 pair --base-dir ${baseDir}`,
+              rendered,
+              `Install the matching CLI with \`${update.command}\`, then pair again: \`${pair.command}\`.`,
             );
+            assert.notInclude(rendered, "npx");
           }
+        }),
+      "127.0.0.1",
+      { ...testDescriptor, serverVersion: "0.0.45", orchestrationProtocolVersion: 1 },
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // Fork: name the runtime already unpacked for the server's version, once its install completed.
+  it.effect("names the unpacked runtime of the server's version on another protocol", () =>
+    withDescriptorServer(
+      (origin) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-pair-runtime-test-"),
+          );
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: Number(new URL(origin).port),
+            }),
+          });
+          const platform = yield* HostProcess.Platform;
+          const versionDir = NodePath.join(baseDir, "runtime", "versions", "0.0.45");
+          const entry = NodePath.join(versionDir, platform === "win32" ? "t3.exe" : "t3");
+          NodeFS.mkdirSync(versionDir, { recursive: true });
+          NodeFS.writeFileSync(entry, "");
+          const render = Effect.gen(function* () {
+            const exit = yield* provideCliTestLayers(
+              runCli(["pair", "--base-dir", baseDir]).pipe(Effect.exit),
+            );
+            assert.isTrue(Exit.isFailure(exit));
+            return Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : "";
+          });
+
+          // Without the install sentinel the runtime may be half-unpacked.
+          assert.include(yield* render, "Install the matching CLI with");
+
+          NodeFS.writeFileSync(NodePath.join(versionDir, ".install-complete"), "0.0.45\n");
+          const call = platform === "win32" ? "& " : "";
+          const words = [entry, "--base-dir", baseDir];
+          const [quotedEntry, ...args] = words.map((word) => hostShellWord(platform, word));
+          assert.include(
+            yield* render,
+            `Pair with the matching CLI instead: \`${call}${quotedEntry} pair ${args.join(" ")}\`.`,
+          );
         }),
       "127.0.0.1",
       { ...testDescriptor, serverVersion: "0.0.45", orchestrationProtocolVersion: 1 },
