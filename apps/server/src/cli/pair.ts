@@ -23,14 +23,18 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { pinnedRuntimePaths } from "../cloud/pinnedRuntime.ts";
+import { isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -88,12 +92,15 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
     serverVersion: Schema.String,
     serverProtocolVersion: Schema.Number,
     pairCommand: Schema.String,
+    installCommand: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`${this.pairCommand}\`.`,
+      this.installCommand === undefined
+        ? `Pair with the matching CLI instead: \`${this.pairCommand}\`.`
+        : `Install the matching CLI with \`${this.installCommand}\`, then pair again: \`${this.pairCommand}\`.`,
     ].join("\n");
   }
 }
@@ -331,6 +338,37 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   });
 });
 
+/**
+ * Fork: this build has no npm package, so `npx t3@<version>` can't fetch the matching CLI. Name the
+ * runtime this machine already unpacked for that version (install.sh, `t3 update` and the service
+ * share `<T3 home>/runtime/versions`), else the update that installs it.
+ */
+const resolveMatchingPairCommand = Effect.fn("pair.resolveMatchingPairCommand")(function* (
+  target: DiscoveredPairTarget,
+  baseDirArgs: ReadonlyArray<string>,
+) {
+  const platform = yield* HostProcess.Platform;
+  const version = target.descriptor.serverVersion;
+  // The version comes from the server's HTTP answer; only an exact version may name a path.
+  if (isExactServiceVersion(version)) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runtime = pinnedRuntimePaths(path, target.baseDir, version, platform);
+    const hasEntry = yield* fs.exists(runtime.entryPath).pipe(Effect.orElseSucceed(() => false));
+    const sentinel = yield* fs.readFileString(runtime.sentinelPath).pipe(Effect.option);
+    if (hasEntry && Option.isSome(sentinel) && sentinel.value.trim() === version) {
+      const entry = hostShellWord(platform, runtime.entryPath);
+      const args = baseDirArgs.map((arg) => ` ${hostShellWord(platform, arg)}`).join("");
+      // PowerShell runs a quoted path only through the call operator.
+      return { pairCommand: `${platform === "win32" ? "& " : ""}${entry} pair${args}` };
+    }
+  }
+  return {
+    pairCommand: (yield* resolveHostCliCommand("pair", baseDirArgs)).command,
+    installCommand: (yield* resolveHostCliCommand("update", [...baseDirArgs, version])).command,
+  };
+});
+
 /** Use the discovered state directory, independent of ambient config variables. */
 const makePairServerConfig = Effect.fn(function* (input: {
   readonly target: DiscoveredPairTarget;
@@ -551,15 +589,14 @@ export const pairCommand = Command.make("pair", {
       // before any local layer opens (and migrates) that database.
       const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
       if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
-        const platform = yield* HostProcess.Platform;
         const baseDirArgs =
           explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0
-            ? ` --base-dir ${hostShellWord(platform, explicitBaseDir)}`
-            : "";
+            ? ["--base-dir", explicitBaseDir]
+            : [];
         return yield* new IncompatibleServerProtocolError({
           serverVersion: target.descriptor.serverVersion,
           serverProtocolVersion,
-          pairCommand: `npx t3@${target.descriptor.serverVersion} pair${baseDirArgs}`,
+          ...(yield* resolveMatchingPairCommand(target, baseDirArgs)),
         });
       }
 
