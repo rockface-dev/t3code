@@ -39,9 +39,19 @@ trap cleanup EXIT
 
 node_version="$(node -p 'require(process.argv[1]).engines.node' "$work/package.json")"
 vp_version="$(sed -nE 's/^  vite-plus: ([0-9][^ ]*)$/\1/p' "$work/pnpm-workspace.yaml")"
-image="t3fork-linux-build:node${node_version}-vp${vp_version}"
+# package.json's "packageManager" must be exactly "pnpm@<x.y.z>", checked in Node before anything is
+# printed: a bare version, a hash suffix or another package manager stops here rather than
+# installing a guess.
+pnpm_version="$(node -p 'const v = require(process.argv[1]).packageManager; const m = /^pnpm@(\d+\.\d+\.\d+)$/.exec(typeof v === "string" ? v : ""); m ? m[1] : ""' "$work/package.json")"
+[[ "$pnpm_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+  { echo "build.sh: package.json's packageManager is not pnpm@<x.y.z>" >&2; exit 1; }
+# Named by the Dockerfile's own content too, so a changed Dockerfile is never served by an old image.
+dockerfile_id="$(sha256sum "$work/fork/pipeline/linux.Dockerfile" | cut -c1-12)"
+[[ "$dockerfile_id" =~ ^[0-9a-f]{12}$ ]] || { echo "build.sh: could not hash the Dockerfile" >&2; exit 1; }
+image="t3fork-linux-build:node${node_version}-vp${vp_version}-pnpm${pnpm_version}-$dockerfile_id"
 docker build --quiet -t "$image" --build-arg "NODE_VERSION=$node_version" \
-  --build-arg "VP_VERSION=$vp_version" -f "$work/fork/pipeline/linux.Dockerfile" "$work/fork/pipeline"
+  --build-arg "VP_VERSION=$vp_version" --build-arg "PNPM_VERSION=$pnpm_version" \
+  -f "$work/fork/pipeline/linux.Dockerfile" "$work/fork/pipeline"
 
 # The worktree and the repo's .git keep their host paths so the worktree's gitdir pointer resolves.
 # .git is read-only, so VP_GIT_HOOKS=0 stops `vp install` from writing core.hooksPath into it.

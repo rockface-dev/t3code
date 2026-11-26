@@ -5,6 +5,9 @@ FROM ubuntu:24.04
 
 ARG NODE_VERSION
 ARG VP_VERSION
+# From 1.8.0 the vite-plus npm package no longer downloads pnpm: `vp install` runs the pnpm on
+# PATH (its docs/guide/ci.md). So the image carries the pnpm that package.json pins.
+ARG PNPM_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -27,4 +30,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
     | sh -s -- -y --profile minimal --default-toolchain stable --target x86_64-unknown-linux-gnu \
  && cargo --version
 
-RUN npm install --global "vite-plus@${VP_VERSION}" && vp --version
+# An empty version would install npm's "latest", so a caller that passes none stops the build.
+RUN : "${VP_VERSION:?}" "${PNPM_VERSION:?}" \
+ && npm install --global "vite-plus@${VP_VERSION}" "pnpm@${PNPM_VERSION}" \
+ && vp --version && pnpm --version
