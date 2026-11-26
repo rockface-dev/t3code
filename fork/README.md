@@ -114,15 +114,15 @@ Codex stops reading instruction files at 32 KiB, and upstream's file is already 
 | `domain`                    | Hosted-app default (`connectAuth.ts`), provider-auth return allowlist (`providerAuthReturnUrl.ts`), iOS Clerk relying party (`apps/mobile/app.config.ts`). |
 | `releaseRepository`         | Release lookup, downloads and links (`cliRelease.ts`, `scripts/install.*`, `desktopUpdate.logic.ts`, `DesktopStartupRecovery.ts`, web links, docs clone).  |
 | `installScriptBaseUrl`      | Where copyable install commands fetch `install.sh`/`install.ps1` (`install.ts`, `servicePreflight.ts`, `InstallT3Commands.tsx`, SSH tunnel, install docs). |
-| `telemetryEnabledByDefault` | The PostHog default (`AnalyticsService.ts`). The desktop app bundles its server, so an environment variable isn't enough.                                  |
+| `telemetryEnabledByDefault` | The analytics default (`AnalyticsService.ts`). The desktop app bundles its server, so an environment variable isn't enough.                                |
 | `desktopAppId`              | macOS bundle ID and app user model ID (`build-desktop-artifact.ts`, `DesktopEnvironment.ts`).                                                              |
 | `mobile.*`                  | iOS bundle IDs and Apple team (`apps/mobile/app.config.ts`).                                                                                               |
 | `relay.*`                   | Relay Postgres size, replica count and Hyperdrive connection limit (`infra/relay/src/db.ts`). Upstream's defaults cost about $150 a month.                 |
 
 Two more edits follow from these values: the server refreshes its model list from
-`releaseRepository`'s `fork` branch (`ModelManifest.ts`), not upstream's `main`; and the PostHog key
+`releaseRepository`'s `fork` branch (`ModelManifest.ts`), not upstream's `main`; and the analytics key
 and host have no defaults (`AnalyticsService.ts`), so a build with analytics turned on but no
-`T3CODE_POSTHOG_KEY`/`T3CODE_POSTHOG_HOST` sends nothing to upstream's project.
+`T3CODE_TELEMETRY_KEY`/`T3CODE_TELEMETRY_HOST` sends nothing to upstream's project.
 Once `domain` is ours, nightly builds also approve agent sign-ins on `app.<domain>`
 (`publicConfig.ts`) instead of upstream's nightly app; until then that line is only checked.
 

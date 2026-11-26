@@ -282,24 +282,37 @@ function applyInstallScriptBaseUrl() {
 // The desktop app bundles its server, so an environment variable can't be relied on there.
 function applyTelemetryDefault() {
   const file = "apps/server/src/telemetry/AnalyticsService.ts";
+  // Upstream: on unless the host is a CI runner. With telemetryEnabledByDefault false it is off
+  // unless T3CODE_TELEMETRY_ENABLED says otherwise, and the CI helper's import goes with its only
+  // use (an unused import fails upstream's lint).
+  const ciDefault = "const enabledByDefault = !isCiEnvironment(hostEnvironment);";
+  const ciImport =
+    'import { isCiEnvironment, isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";';
   edit(
     file,
-    'enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),',
-    `enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(${identity.telemetryEnabledByDefault})),`,
-  );
-  // No default destination: analytics on without T3CODE_POSTHOG_KEY/_HOST sends nothing upstream; a
-  // blank host fails on the machine, inside the existing backoff and drop limit. The key anchor is
-  // exact, so a rotated upstream key stops the sync. One line each, as upstream's formatter prints
-  // them (the sandbox compares byte for byte).
-  edit(
-    file,
-    '\n  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(\n    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),\n  ),\n',
-    '\n  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(Config.withDefault("")),\n',
+    ciDefault,
+    identity.telemetryEnabledByDefault ? ciDefault : "const enabledByDefault = false;",
   );
   edit(
     file,
-    '\n  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(\n    Config.withDefault("https://ingest.t3.codes"),\n  ),\n',
-    '\n  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(Config.withDefault("")),\n',
+    ciImport,
+    identity.telemetryEnabledByDefault
+      ? ciImport
+      : 'import { isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";',
+  );
+  // No default destination: analytics on without T3CODE_TELEMETRY_KEY/_HOST sends nothing upstream;
+  // a blank host fails on the machine, inside the existing backoff and drop limit. The key anchor
+  // is exact, so a rotated upstream key stops the sync. One line each, as upstream's formatter
+  // prints them (the sandbox compares byte for byte).
+  edit(
+    file,
+    '\n  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(\n    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),\n  ),\n',
+    '\n  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(Config.withDefault("")),\n',
+  );
+  edit(
+    file,
+    '\n  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(\n    Config.withDefault("https://ingest.t3.codes"),\n  ),\n',
+    '\n  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(Config.withDefault("")),\n',
   );
 }
 
