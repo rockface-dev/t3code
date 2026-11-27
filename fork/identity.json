@@ -3,7 +3,11 @@
   "domain": "t3.codes",
   "releaseRepository": "rockface-dev/t3code",
   "installScriptBaseUrl": "https://raw.githubusercontent.com/rockface-dev/t3code/fork/scripts",
-  "telemetryEnabledByDefault": false,
+  "telemetryEnabledByDefault": true,
+  "telemetry": {
+    "ingestHost": "https://ingest.shipdifferent.dev",
+    "ingestKey": "shipdifferent-app-1"
+  },
   "desktopAppId": "com.t3tools.t3code",
   "mobile": {
     "bundleIdentifier": "com.t3tools.t3code",

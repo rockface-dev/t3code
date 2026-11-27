@@ -114,15 +114,16 @@ Codex stops reading instruction files at 32 KiB, and upstream's file is already 
 | `domain`                    | Hosted-app default (`connectAuth.ts`), provider-auth return allowlist (`providerAuthReturnUrl.ts`), iOS Clerk relying party (`apps/mobile/app.config.ts`). |
 | `releaseRepository`         | Release lookup, downloads and links (`cliRelease.ts`, `scripts/install.*`, `desktopUpdate.logic.ts`, `DesktopStartupRecovery.ts`, web links, docs clone).  |
 | `installScriptBaseUrl`      | Where copyable install commands fetch `install.sh`/`install.ps1` (`install.ts`, `servicePreflight.ts`, `InstallT3Commands.tsx`, SSH tunnel, install docs). |
-| `telemetryEnabledByDefault` | The analytics default (`AnalyticsService.ts`). The desktop app bundles its server, so an environment variable isn't enough.                                |
+| `telemetryEnabledByDefault` | Analytics on by default, as upstream's: off on CI runners and with `DO_NOT_TRACK` (`AnalyticsService.ts`).                                                 |
+| `telemetry.*`               | Where analytics go: this build's ingest server and the public key it accepts (`AnalyticsService.ts`, `docs/user/telemetry.md`).                            |
 | `desktopAppId`              | macOS bundle ID and app user model ID (`build-desktop-artifact.ts`, `DesktopEnvironment.ts`).                                                              |
 | `mobile.*`                  | iOS bundle IDs and Apple team (`apps/mobile/app.config.ts`).                                                                                               |
 | `relay.*`                   | Relay Postgres size, replica count and Hyperdrive connection limit (`infra/relay/src/db.ts`). Upstream's defaults cost about $150 a month.                 |
 
 Two more edits follow from these values: the server refreshes its model list from
-`releaseRepository`'s `fork` branch (`ModelManifest.ts`), not upstream's `main`; and the analytics key
-and host have no defaults (`AnalyticsService.ts`), so a build with analytics turned on but no
-`T3CODE_TELEMETRY_KEY`/`T3CODE_TELEMETRY_HOST` sends nothing to upstream's project.
+`releaseRepository`'s `fork` branch (`ModelManifest.ts`), not upstream's `main`; and after every
+edit `apply.ts` checks that no shipped source under `apps/`, `packages/`, `infra/` or `scripts/`
+still names upstream's analytics host or key, so a second place upstream adds stops the sync.
 Once `domain` is ours, nightly builds also approve agent sign-ins on `app.<domain>`
 (`publicConfig.ts`) instead of upstream's nightly app; until then that line is only checked.
 
@@ -135,6 +136,9 @@ Patches (`fork/patches/`, listed in `.patches`):
 - `pair-matching-cli.patch`: when `t3 pair` finds a server on another protocol, it names the
   runtime this machine already unpacked for the server's version, or `t3 update <version>` and then
   `t3 pair`, instead of upstream's `npx t3@<version> pair` (this build has no npm package).
+- `analytics-defaults-test.patch`: a test only. It starts the analytics service with no settings
+  and checks that its one request goes to this build's ingest server with this build's key, and
+  that nothing is sent from a CI runner or with `DO_NOT_TRACK`.
 
 Everything else is configured at build or run time, without changing code:
 
