@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: shadeydev <233503709+shadeydev@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 00:03:17 -0600
+Subject: [PATCH] server: pair names this build's matching CLI instead of npx
+ t3@<version>
+
+Intent: when the running server speaks another orchestration protocol, `t3 pair` refuses and names the CLI that matches the server. Upstream names `npx t3@<version> pair`, which runs upstream's npm package; this build publishes none. Name the runtime this machine already unpacked for the server's version (`<T3 home>/runtime/versions/<version>/t3`, `t3.exe` on Windows, used only when its `.install-complete` sentinel holds that version, as install.sh and the pinned-runtime code require), else `t3 update [--base-dir <dir>] <version>` followed by `t3 pair`. The version comes from the server's HTTP answer, so it names a path only when it is an exact version; every word is quoted with upstream's hostShellWord.
+
+Kind: fork-only. Drop it only if this build ever publishes an npm package.
+
+Check: apps/server/src/cli/pair.test.ts: "rejects a server on another protocol before opening its database" (no runtime: the update hint, no npx) and "names the unpacked runtime of the server's version on another protocol" (entry without sentinel: the update hint; with it: the runtime path).
+Fork-Patch: pair-matching-cli.patch
+
+diff --git a/apps/server/src/cli/pair.test.ts b/apps/server/src/cli/pair.test.ts
+index baafbca9817ac7f810db9f5e8f744c95a69e5c33..8ae9d7f4e2f2a113dada973c54ba8c075a970240 100644
+--- a/apps/server/src/cli/pair.test.ts
++++ b/apps/server/src/cli/pair.test.ts
+@@ -37,7 +37,7 @@ import {
+   persistServerRuntimeState,
+   type PersistedServerRuntimeState,
+ } from "../serverRuntimeState.ts";
+-import { resolveHostCliCommand } from "./invocation.ts";
++import { hostShellWord, resolveHostCliCommand } from "./invocation.ts";
+ import {
+   DevServerNotProxiableError,
+   resolveTailscaleLocalTarget,
+@@ -498,10 +498,16 @@ describe("t3 pair", () => {
+           ]);
+           assert.isTrue(Exit.isFailure(exit));
+           if (Exit.isFailure(exit)) {
++            // Fork: no npm package, so no `npx t3@<version>`; the hint installs that version.
++            const rendered = String(Cause.squash(exit.cause));
++            const baseDirArgs = ["--base-dir", baseDir];
++            const update = yield* resolveHostCliCommand("update", [...baseDirArgs, "0.0.45"]);
++            const pair = yield* resolveHostCliCommand("pair", baseDirArgs);
+             assert.include(
+-              String(Cause.squash(exit.cause)),
+-              `t3@0.0.45 pair --base-dir ${baseDir}`,
++              rendered,
++              `Install the matching CLI with \`${update.command}\`, then pair again: \`${pair.command}\`.`,
+             );
++            assert.notInclude(rendered, "npx");
+           }
+         }),
+       "127.0.0.1",
+@@ -509,6 +515,51 @@ describe("t3 pair", () => {
+     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+   );
+ 
++  // Fork: name the runtime already unpacked for the server's version, once its install completed.
++  it.effect("names the unpacked runtime of the server's version on another protocol", () =>
++    withDescriptorServer(
++      (origin) =>
++        Effect.gen(function* () {
++          const baseDir = NodeFS.mkdtempSync(
++            NodePath.join(NodeOS.tmpdir(), "t3-pair-runtime-test-"),
++          );
++          yield* persistServerRuntimeState({
++            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
++            state: yield* makePersistedServerRuntimeState({
++              config: { host: "127.0.0.1", devUrl: undefined },
++              port: Number(new URL(origin).port),
++            }),
++          });
++          const platform = yield* HostProcess.Platform;
++          const versionDir = NodePath.join(baseDir, "runtime", "versions", "0.0.45");
++          const entry = NodePath.join(versionDir, platform === "win32" ? "t3.exe" : "t3");
++          NodeFS.mkdirSync(versionDir, { recursive: true });
++          NodeFS.writeFileSync(entry, "");
++          const render = Effect.gen(function* () {
++            const exit = yield* provideCliTestLayers(
++              runCli(["pair", "--base-dir", baseDir]).pipe(Effect.exit),
++            );
++            assert.isTrue(Exit.isFailure(exit));
++            return Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : "";
++          });
++
++          // Without the install sentinel the runtime may be half-unpacked.
++          assert.include(yield* render, "Install the matching CLI with");
++
++          NodeFS.writeFileSync(NodePath.join(versionDir, ".install-complete"), "0.0.45\n");
++          const call = platform === "win32" ? "& " : "";
++          const words = [entry, "--base-dir", baseDir];
++          const [quotedEntry, ...args] = words.map((word) => hostShellWord(platform, word));
++          assert.include(
++            yield* render,
++            `Pair with the matching CLI instead: \`${call}${quotedEntry} pair ${args.join(" ")}\`.`,
++          );
++        }),
++      "127.0.0.1",
++      { ...testDescriptor, serverVersion: "0.0.45", orchestrationProtocolVersion: 1 },
++    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
++  );
++
+   // Without the capability `tailscale serve` blocks on an enablement URL, so
+   // pairing must stop at status instead of spawning it.
+   it.effect("explains a tailnet without HTTPS serve instead of running tailscale serve", () =>
+diff --git a/apps/server/src/cli/pair.ts b/apps/server/src/cli/pair.ts
+index 2d45d45befeec3b77f1f58f68dbd87895eee33bc..0406afa25c47fcd80090570cd8a0f6b81209178a 100644
+--- a/apps/server/src/cli/pair.ts
++++ b/apps/server/src/cli/pair.ts
+@@ -23,14 +23,18 @@ import * as Console from "effect/Console";
+ import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
++import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
++import * as Path from "effect/Path";
+ import * as References from "effect/References";
+ import * as Schema from "effect/Schema";
+ import { Command, Flag, GlobalFlag } from "effect/cli";
+ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+ 
+ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
++import { pinnedRuntimePaths } from "../cloud/pinnedRuntime.ts";
++import { isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+ import * as ServerConfig from "../config.ts";
+ import * as ManagedLimits from "../policy/managedLimits.ts";
+ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+@@ -88,12 +92,15 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
+     serverVersion: Schema.String,
+     serverProtocolVersion: Schema.Number,
+     pairCommand: Schema.String,
++    installCommand: Schema.optional(Schema.String),
+   },
+ ) {
+   override get message(): string {
+     return [
+       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
+-      `Pair with the matching CLI instead: \`${this.pairCommand}\`.`,
++      this.installCommand === undefined
++        ? `Pair with the matching CLI instead: \`${this.pairCommand}\`.`
++        : `Install the matching CLI with \`${this.installCommand}\`, then pair again: \`${this.pairCommand}\`.`,
+     ].join("\n");
+   }
+ }
+@@ -331,6 +338,37 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
+   });
+ });
+ 
++/**
++ * Fork: this build has no npm package, so `npx t3@<version>` can't fetch the matching CLI. Name the
++ * runtime this machine already unpacked for that version (install.sh, `t3 update` and the service
++ * share `<T3 home>/runtime/versions`), else the update that installs it.
++ */
++const resolveMatchingPairCommand = Effect.fn("pair.resolveMatchingPairCommand")(function* (
++  target: DiscoveredPairTarget,
++  baseDirArgs: ReadonlyArray<string>,
++) {
++  const platform = yield* HostProcess.Platform;
++  const version = target.descriptor.serverVersion;
++  // The version comes from the server's HTTP answer; only an exact version may name a path.
++  if (isExactServiceVersion(version)) {
++    const fs = yield* FileSystem.FileSystem;
++    const path = yield* Path.Path;
++    const runtime = pinnedRuntimePaths(path, target.baseDir, version, platform);
++    const hasEntry = yield* fs.exists(runtime.entryPath).pipe(Effect.orElseSucceed(() => false));
++    const sentinel = yield* fs.readFileString(runtime.sentinelPath).pipe(Effect.option);
++    if (hasEntry && Option.isSome(sentinel) && sentinel.value.trim() === version) {
++      const entry = hostShellWord(platform, runtime.entryPath);
++      const args = baseDirArgs.map((arg) => ` ${hostShellWord(platform, arg)}`).join("");
++      // PowerShell runs a quoted path only through the call operator.
++      return { pairCommand: `${platform === "win32" ? "& " : ""}${entry} pair${args}` };
++    }
++  }
++  return {
++    pairCommand: (yield* resolveHostCliCommand("pair", baseDirArgs)).command,
++    installCommand: (yield* resolveHostCliCommand("update", [...baseDirArgs, version])).command,
++  };
++});
++
+ /** Use the discovered state directory, independent of ambient config variables. */
+ const makePairServerConfig = Effect.fn(function* (input: {
+   readonly target: DiscoveredPairTarget;
+@@ -551,15 +589,14 @@ export const pairCommand = Command.make("pair", {
+       // before any local layer opens (and migrates) that database.
+       const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
+       if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
+-        const platform = yield* HostProcess.Platform;
+         const baseDirArgs =
+           explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0
+-            ? ` --base-dir ${hostShellWord(platform, explicitBaseDir)}`
+-            : "";
++            ? ["--base-dir", explicitBaseDir]
++            : [];
+         return yield* new IncompatibleServerProtocolError({
+           serverVersion: target.descriptor.serverVersion,
+           serverProtocolVersion,
+-          pairCommand: `npx t3@${target.descriptor.serverVersion} pair${baseDirArgs}`,
++          ...(yield* resolveMatchingPairCommand(target, baseDirArgs)),
+         });
+       }
+ 

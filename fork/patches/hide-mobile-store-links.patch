@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: shadeydev <233503709+shadeydev@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 21:59:03 -0600
+Subject: [PATCH] web: hide upstream's mobile store links until this build has
+ its own app
+
+Intent: Settings (the Mobile app row and its search entry) and the Welcome page's Phone section must not send people to upstream's App Store and Google Play apps, which connect to upstream's T3 Connect, not this build's. One flag, MOBILE_APP_PUBLISHED in apps/web/src/branding.ts, hides them; the strings stay in the source so the translation catalogs don't change.
+
+Kind: temporary. Drop it (or set the flag and point the links at our app) once this build's own mobile app is in TestFlight.
+
+Check: apps/web/src/components/settings/settingsSearch.mobileApp.test.ts, and the phone test in WelcomePage.import.browser.test.tsx, which asserts the hidden Phone section while the flag is false; in the app, Settings > About has no Mobile app row, and searching "App Store" finds nothing.
+Fork-Patch: hide-mobile-store-links.patch
+
+diff --git a/apps/web/src/branding.ts b/apps/web/src/branding.ts
+index bf5b76f0dd1b7a4dd698ea943eaa0cc0520c2b82..a007165acd7e459ac3c0916dc6320106475bdc4e 100644
+--- a/apps/web/src/branding.ts
++++ b/apps/web/src/branding.ts
+@@ -33,3 +33,7 @@ export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
+ export const DESKTOP_DOWNLOAD_URL = "https://t3.codes/download";
+ // Redirects to the App Store or Google Play to match the phone that opens it.
+ export const MOBILE_APP_URL = "https://t3.codes/mobile";
++// This build's own mobile app isn't in the stores yet, and the store apps above don't connect to
++// this build's T3 Connect. While false, the store links, their QR codes and the Welcome page's
++// phone setup stay hidden.
++export const MOBILE_APP_PUBLISHED = false;
+diff --git a/apps/web/src/components/onboarding/WelcomePage.import.browser.test.tsx b/apps/web/src/components/onboarding/WelcomePage.import.browser.test.tsx
+index 5615fa30818420e211e74a261c54c3a4c4fd7694..4922f7f95b8f89b5ea4c220ca3dc12bdb6243e76 100644
+--- a/apps/web/src/components/onboarding/WelcomePage.import.browser.test.tsx
++++ b/apps/web/src/components/onboarding/WelcomePage.import.browser.test.tsx
+@@ -18,6 +18,7 @@ import {
+ import { AsyncResult, Atom } from "effect/reactivity";
+ import { expect, it, vi } from "vite-plus/test";
+ 
++import { MOBILE_APP_PUBLISHED } from "~/branding";
+ import "~/index.css";
+ import { act, render } from "../../../test/render";
+ 
+@@ -765,6 +766,12 @@ it("says the phone is set up only once this computer is shared with the signed-i
+   );
+   state.linkError = "Could not read T3 Connect link state.";
+   await using _screen = await mountWelcome();
++  if (!MOBILE_APP_PUBLISHED) {
++    // This build hides the Phone section until its own mobile app ships.
++    expect(pageText()).not.toContain("Use T3 Code on your phone");
++    expect(() => button("Set up")).toThrow("Missing button: Set up");
++    return;
++  }
+   await click("Set up");
+   // A failed read says so instead of asking to share the computer again.
+   await vi.waitFor(() => expect(pageText()).toContain("Could not check T3 Connect."));
+diff --git a/apps/web/src/components/onboarding/WelcomePage.tsx b/apps/web/src/components/onboarding/WelcomePage.tsx
+index 5c1b4218117fc538b60ea0d9a37f08220f6212f9..7ad37fca7993a149de312d94b9fec3f0daaa97ac 100644
+--- a/apps/web/src/components/onboarding/WelcomePage.tsx
++++ b/apps/web/src/components/onboarding/WelcomePage.tsx
+@@ -41,7 +41,7 @@ import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
+ import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+ 
+ import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+-import { MOBILE_APP_URL } from "../../branding";
++import { MOBILE_APP_PUBLISHED, MOBILE_APP_URL } from "../../branding";
+ import { isElectron } from "../../env";
+ import { useLocalStorage } from "../../hooks/useLocalStorage";
+ import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
+@@ -303,7 +303,9 @@ export function WelcomePage({
+                 projectImport={projectImport}
+                 isImporting={isImporting}
+               />
+-              {showPhone ? <PhoneSection environmentId={environmentId} /> : null}
++              {showPhone && MOBILE_APP_PUBLISHED ? (
++                <PhoneSection environmentId={environmentId} />
++              ) : null}
+             </div>
+             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+               {agentReady ? (
+diff --git a/apps/web/src/components/settings/MobileAppSettingsRow.tsx b/apps/web/src/components/settings/MobileAppSettingsRow.tsx
+index c7ebd5a4cde7f930d54cbf7b895bc913e5ade6d1..739711a1e6796d3a67e75ee8acbef3e86a6aa4bb 100644
+--- a/apps/web/src/components/settings/MobileAppSettingsRow.tsx
++++ b/apps/web/src/components/settings/MobileAppSettingsRow.tsx
+@@ -1,5 +1,6 @@
+ import { msg, T, useGT, useMessages, Var } from "gt-react";
+ 
++import { MOBILE_APP_PUBLISHED } from "~/branding";
+ import { AndroidIcon, AppleIcon } from "../Icons";
+ import { Button } from "../ui/button";
+ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
+@@ -26,6 +27,7 @@ export function MobileAppSettingsRow() {
+   const searchableSetting = useSearchableSetting();
+   const gt = useGT();
+   const m = useMessages();
++  if (!MOBILE_APP_PUBLISHED) return null;
+   return (
+     <SettingsRow
+       {...searchableSetting("mobile-app")}
+diff --git a/apps/web/src/components/settings/settingsSearch.mobileApp.test.ts b/apps/web/src/components/settings/settingsSearch.mobileApp.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d9008635e57f5ac8fbfdc9a97b61d285bf841a67
+--- /dev/null
++++ b/apps/web/src/components/settings/settingsSearch.mobileApp.test.ts
+@@ -0,0 +1,20 @@
++import { describe, expect, it } from "vite-plus/test";
++
++import { MOBILE_APP_PUBLISHED } from "~/branding";
++import { searchSettings, settingsForThisPlatform, SETTINGS_SEARCH_ITEMS } from "./settingsSearch";
++
++// The store links stay hidden until this build's own mobile app is published.
++describe("mobile app links in this build", () => {
++  it("is not published yet", () => {
++    expect(MOBILE_APP_PUBLISHED).toBe(false);
++  });
++
++  it("leaves the store row out of settings search and the command palette", () => {
++    for (const query of ["App Store", "Google Play", "mobile app", "iPhone"]) {
++      expect(searchSettings(query).map((item) => item.id)).not.toContain("mobile-app");
++    }
++    const ids = settingsForThisPlatform(SETTINGS_SEARCH_ITEMS).map((item) => item.id);
++    expect(ids).not.toContain("mobile-app");
++    expect(ids).toContain("welcome-page");
++  });
++});
+diff --git a/apps/web/src/components/settings/settingsSearch.ts b/apps/web/src/components/settings/settingsSearch.ts
+index 4252fccc9c7d02e91a49911bcd3bce4f29f5914a..6bbc6103104227143f33341bd9ee82fece4d08a7 100644
+--- a/apps/web/src/components/settings/settingsSearch.ts
++++ b/apps/web/src/components/settings/settingsSearch.ts
+@@ -1,4 +1,4 @@
+-import { HOSTED_APP_CHANNEL } from "~/branding";
++import { HOSTED_APP_CHANNEL, MOBILE_APP_PUBLISHED } from "~/branding";
+ import { isElectron } from "~/env";
+ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+ import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
+@@ -1670,6 +1670,7 @@ export function settingsForThisPlatform(
+     (item) =>
+       (isElectron || item.desktopOnly !== true) &&
+       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
++      (MOBILE_APP_PUBLISHED || item.id !== "mobile-app") &&
+       (!item.macOnly || isMacPlatform(platform)) &&
+       (!item.windowsOnly || isWindowsPlatform(platform)),
+   );
