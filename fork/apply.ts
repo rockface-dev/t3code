@@ -12,6 +12,8 @@ const UPSTREAM = {
   desktopAppId: "com.t3tools.t3code",
   bundleIdentifier: "com.t3tools.t3code",
   appleTeamId: "ARK85ZXQ4Z",
+  telemetryHost: "ingest.t3.codes",
+  telemetryKey: "phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m",
 } as const;
 
 interface Identity {
@@ -19,6 +21,15 @@ interface Identity {
   readonly releaseRepository: string;
   readonly installScriptBaseUrl: string;
   readonly telemetryEnabledByDefault: boolean;
+  /**
+   * Where this build's analytics go: our own ingest server and the public key it accepts, and the
+   * page the app's "Privacy Policy" link opens, which must say who receives them.
+   */
+  readonly telemetry: {
+    readonly ingestHost: string;
+    readonly ingestKey: string;
+    readonly privacyUrl: string;
+  };
   readonly desktopAppId: string;
   readonly mobile: {
     readonly bundleIdentifier: string;
@@ -104,6 +115,17 @@ function formattedIf(indent: string, test: string, rest: string): string {
   return rest === "{"
     ? `${indent}if (\n${indent}  ${test}\n${indent}) {`
     : `${indent}if (${test})\n${indent}  ${rest}`;
+}
+
+/**
+ * `  <name>: Config.String("<env>").pipe(Config.withDefault("<value>")),` as upstream's formatter
+ * prints it (100 columns): one line when it fits, otherwise the default on a line of its own.
+ */
+function formattedDefault(name: string, env: string, value: string): string {
+  const flat = `  ${name}: Config.String("${env}").pipe(Config.withDefault("${value}")),`;
+  return flat.length <= 100
+    ? flat
+    : `  ${name}: Config.String("${env}").pipe(\n    Config.withDefault("${value}"),\n  ),`;
 }
 
 // Only the hosts the product needs at runtime. Upstream's docs, tests, marketing and help links
@@ -300,19 +322,59 @@ function applyTelemetryDefault() {
       ? ciImport
       : 'import { isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";',
   );
-  // No default destination: analytics on without T3CODE_TELEMETRY_KEY/_HOST sends nothing upstream;
-  // a blank host fails on the machine, inside the existing backoff and drop limit. The key anchor
-  // is exact, so a rotated upstream key stops the sync. One line each, as upstream's formatter
-  // prints them (the sandbox compares byte for byte).
+  // This build's own destination, never upstream's: our ingest server and the public key it
+  // accepts (fork/identity.json "telemetry"). Both anchors are exact, so a rotated upstream key or
+  // a moved host stops the sync instead of shipping upstream's value.
+  const { ingestHost, ingestKey, privacyUrl } = identity.telemetry;
+  // A lowercase DNS name (labels of 1 to 63, 253 in all) whose last label is letters only, so no
+  // IP address; no port, no path.
+  const dnsLabel = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?";
+  const dnsName = new RegExp(`^(?=.{4,253}$)(${dnsLabel}\\.)+[a-z]{2,63}$`);
+  const hostOk =
+    typeof ingestHost === "string" &&
+    ingestHost.startsWith("https://") &&
+    dnsName.test(ingestHost.slice("https://".length));
+  const keyOk = typeof ingestKey === "string" && /^[A-Za-z0-9_-]+$/.test(ingestKey);
+  const privacyOk =
+    typeof privacyUrl === "string" &&
+    /^https:\/\/[a-z0-9.-]+\/[A-Za-z0-9./_-]*$/.test(privacyUrl) &&
+    URL.canParse(privacyUrl);
+  if (!hostOk) {
+    failures.push("fork/identity.json: telemetry.ingestHost must be https://<dns name>, no path");
+  }
+  if (!keyOk) {
+    failures.push("fork/identity.json: telemetry.ingestKey must be letters, digits, - or _");
+  }
+  if (!privacyOk) {
+    failures.push("fork/identity.json: telemetry.privacyUrl must be a plain https:// address");
+  }
+  // The edits below write these values into source text, so none is made with a bad one.
+  if (!hostOk || !keyOk || !privacyOk) return;
   edit(
     file,
     '\n  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(\n    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),\n  ),\n',
-    '\n  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(Config.withDefault("")),\n',
+    `\n${formattedDefault("ingestKey", "T3CODE_TELEMETRY_KEY", ingestKey)}\n`,
   );
   edit(
     file,
     '\n  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(\n    Config.withDefault("https://ingest.t3.codes"),\n  ),\n',
-    '\n  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(Config.withDefault("")),\n',
+    `\n${formattedDefault("ingestHost", "T3CODE_TELEMETRY_HOST", ingestHost)}\n`,
+  );
+  // The user-facing page says where usage events go, so it must name this build's server and who
+  // runs it. The app's "Privacy Policy" link opens that page instead of upstream's policy, which
+  // names upstream's company as the collector.
+  edit(
+    "docs/user/telemetry.md",
+    "The server sends usage events to `ingest.t3.codes` under",
+    `The server sends usage events to \`${ingestHost.slice("https://".length)}\`, a server run by this build's maintainers (github.com/${identity.releaseRepository}), not by T3 Tools, under`,
+  );
+  edit(
+    "apps/web/src/legalLinks.ts",
+    `export const PRIVACY_POLICY_URL = "https://${UPSTREAM.domain}/privacy-policy";`,
+    // As upstream's formatter prints it: one line when it fits in 100 columns.
+    `export const PRIVACY_POLICY_URL = "${privacyUrl}";`.length <= 100
+      ? `export const PRIVACY_POLICY_URL = "${privacyUrl}";`
+      : `export const PRIVACY_POLICY_URL =\n  "${privacyUrl}";`,
   );
 }
 
@@ -400,6 +462,40 @@ function applyAgentRules() {
   edit("AGENTS.md", /^# T3 Code\n/, (title) => `${title}\n${rules}\n`);
 }
 
+/**
+ * Checks the result, not only the anchors: after every edit, no tracked file under apps/,
+ * packages/, infra/ or scripts/ may hold upstream's analytics host or key as plain text, in any
+ * letter case. What it skips and cannot see is listed in fork/README.md.
+ */
+function checkNoUpstreamTelemetry() {
+  const tracked = NodeChildProcess.execFileSync(
+    "git",
+    ["ls-files", "-z", "--", "apps", "packages", "infra", "scripts"],
+    { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  ).split("\0");
+  const values = [UPSTREAM.telemetryHost, UPSTREAM.telemetryKey].map((value) => ({
+    value,
+    lower: value.toLowerCase(),
+  }));
+  for (const file of tracked) {
+    if (file === "" || /\.test\.[cm]?[jt]sx?$/.test(file)) continue;
+    let content = staged.get(file);
+    if (content === undefined) {
+      const stat = NodeFS.lstatSync(NodePath.join(root, file), { throwIfNoEntry: false });
+      if (stat === undefined || !stat.isFile()) continue;
+      const bytes = NodeFS.readFileSync(NodePath.join(root, file));
+      if (bytes.includes(0)) continue;
+      content = bytes.toString("utf8");
+    }
+    const lower = content.toLowerCase();
+    for (const { value, lower: needle } of values) {
+      if (lower.includes(needle)) {
+        failures.push(`${file}: still names upstream's analytics ${value} after the edits`);
+      }
+    }
+  }
+}
+
 applyAgentRules();
 applyDomain();
 applyReleaseRepository();
@@ -407,6 +503,7 @@ applyInstallScriptBaseUrl();
 applyRelaySizing();
 applyTelemetryDefault();
 applyAppIdentity();
+checkNoUpstreamTelemetry();
 
 if (failures.length > 0) {
   console.error(
