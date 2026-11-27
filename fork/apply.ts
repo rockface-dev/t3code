@@ -326,21 +326,30 @@ function applyTelemetryDefault() {
   // accepts (fork/identity.json "telemetry"). Both anchors are exact, so a rotated upstream key or
   // a moved host stops the sync instead of shipping upstream's value.
   const { ingestHost, ingestKey, privacyUrl } = identity.telemetry;
-  // A lowercase DNS name with a letters-only last label (so no IP address), no port, no path.
-  const dnsName = /^(?=[a-z0-9.-]{4,253}$)([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/;
+  // A lowercase DNS name (labels of 1 to 63, 253 in all) whose last label is letters only, so no
+  // IP address; no port, no path.
+  const dnsLabel = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?";
+  const dnsName = new RegExp(`^(?=.{4,253}$)(${dnsLabel}\\.)+[a-z]{2,63}$`);
   const hostOk =
     typeof ingestHost === "string" &&
     ingestHost.startsWith("https://") &&
     dnsName.test(ingestHost.slice("https://".length));
+  const keyOk = typeof ingestKey === "string" && /^[A-Za-z0-9_-]+$/.test(ingestKey);
+  const privacyOk =
+    typeof privacyUrl === "string" &&
+    /^https:\/\/[a-z0-9.-]+\/[A-Za-z0-9./_-]*$/.test(privacyUrl) &&
+    URL.canParse(privacyUrl);
   if (!hostOk) {
     failures.push("fork/identity.json: telemetry.ingestHost must be https://<dns name>, no path");
   }
-  if (typeof ingestKey !== "string" || !/^[A-Za-z0-9_-]+$/.test(ingestKey)) {
+  if (!keyOk) {
     failures.push("fork/identity.json: telemetry.ingestKey must be letters, digits, - or _");
   }
-  if (typeof privacyUrl !== "string" || !/^https:\/\/[A-Za-z0-9./_-]+$/.test(privacyUrl)) {
+  if (!privacyOk) {
     failures.push("fork/identity.json: telemetry.privacyUrl must be a plain https:// address");
   }
+  // The edits below write these values into source text, so none is made with a bad one.
+  if (!hostOk || !keyOk || !privacyOk) return;
   edit(
     file,
     '\n  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(\n    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),\n  ),\n',
@@ -455,11 +464,8 @@ function applyAgentRules() {
 
 /**
  * Checks the result, not only the anchors: after every edit, no tracked file under apps/,
- * packages/, infra/ or scripts/ may still hold upstream's analytics host or key as plain text (any
- * letter case). The edits above replace the one place they are today; this stops the sync if
- * upstream adds a second. It can't see a value built from parts at runtime; for the server's own
- * defaults the test in fork/patches/analytics-defaults-test.patch covers that. Test files are
- * skipped (they may name anything), and so are binary files and paths missing from the tree.
+ * packages/, infra/ or scripts/ may hold upstream's analytics host or key as plain text, in any
+ * letter case. What it skips and cannot see is listed in fork/README.md.
  */
 function checkNoUpstreamTelemetry() {
   const tracked = NodeChildProcess.execFileSync(
@@ -477,8 +483,9 @@ function checkNoUpstreamTelemetry() {
     if (content === undefined) {
       const stat = NodeFS.lstatSync(NodePath.join(root, file), { throwIfNoEntry: false });
       if (stat === undefined || !stat.isFile()) continue;
-      content = NodeFS.readFileSync(NodePath.join(root, file), "utf8");
-      if (content.includes("\0")) continue;
+      const bytes = NodeFS.readFileSync(NodePath.join(root, file));
+      if (bytes.includes(0)) continue;
+      content = bytes.toString("utf8");
     }
     const lower = content.toLowerCase();
     for (const { value, lower: needle } of values) {

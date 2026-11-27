@@ -123,8 +123,10 @@ Codex stops reading instruction files at 32 KiB, and upstream's file is already 
 Two more edits follow from these values: the server refreshes its model list from
 `releaseRepository`'s `fork` branch (`ModelManifest.ts`), not upstream's `main`; and after every
 edit `apply.ts` checks that no tracked file under `apps/`, `packages/`, `infra/` or `scripts/`
-(test files aside) still holds upstream's analytics host or key as plain text, so a second place
-upstream adds stops the sync. A value built from parts at runtime is outside that check.
+still holds upstream's analytics host or key as plain text, in any letter case, so a second place
+upstream adds stops the sync. That check skips test files (`*.test.*`), binary files (any NUL
+byte), symlinks and paths missing from the tree, and it cannot see a value built from parts at
+runtime.
 Once `domain` is ours, nightly builds also approve agent sign-ins on `app.<domain>`
 (`publicConfig.ts`) instead of upstream's nightly app; until then that line is only checked.
 
@@ -139,8 +141,9 @@ Patches (`fork/patches/`, listed in `.patches`):
   `t3 pair`, instead of upstream's `npx t3@<version> pair` (this build has no npm package).
 - `analytics-defaults-test.patch`: a test only. It starts the analytics service with no settings
   and checks that its one request goes to this build's ingest server with this build's key, and
-  that nothing is sent from a CI runner or with `DO_NOT_TRACK`. It asserts the defaults in
-  `fork/identity.json`: changing `telemetry.*` or `telemetryEnabledByDefault` means changing it.
+  that nothing is sent from a CI runner or with `DO_NOT_TRACK`. It asserts three defaults in
+  `fork/identity.json`: changing `telemetry.ingestHost`, `telemetry.ingestKey` or
+  `telemetryEnabledByDefault` means changing it.
 
 Everything else is configured at build or run time, without changing code:
 
