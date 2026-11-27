@@ -21,10 +21,14 @@ interface Identity {
   readonly releaseRepository: string;
   readonly installScriptBaseUrl: string;
   readonly telemetryEnabledByDefault: boolean;
-  /** Where this build's analytics go: our own ingest server and the public key it accepts. */
+  /**
+   * Where this build's analytics go: our own ingest server and the public key it accepts, and the
+   * page the app's "Privacy Policy" link opens, which must say who receives them.
+   */
   readonly telemetry: {
     readonly ingestHost: string;
     readonly ingestKey: string;
+    readonly privacyUrl: string;
   };
   readonly desktopAppId: string;
   readonly mobile: {
@@ -321,12 +325,21 @@ function applyTelemetryDefault() {
   // This build's own destination, never upstream's: our ingest server and the public key it
   // accepts (fork/identity.json "telemetry"). Both anchors are exact, so a rotated upstream key or
   // a moved host stops the sync instead of shipping upstream's value.
-  const { ingestHost, ingestKey } = identity.telemetry;
-  if (!/^https:\/\/[a-z0-9.-]+$/.test(ingestHost)) {
-    failures.push("fork/identity.json: telemetry.ingestHost must be https://<host>, no path");
+  const { ingestHost, ingestKey, privacyUrl } = identity.telemetry;
+  // A lowercase DNS name with a letters-only last label (so no IP address), no port, no path.
+  const dnsName = /^(?=[a-z0-9.-]{4,253}$)([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/;
+  const hostOk =
+    typeof ingestHost === "string" &&
+    ingestHost.startsWith("https://") &&
+    dnsName.test(ingestHost.slice("https://".length));
+  if (!hostOk) {
+    failures.push("fork/identity.json: telemetry.ingestHost must be https://<dns name>, no path");
   }
-  if (!/^[A-Za-z0-9_-]+$/.test(ingestKey)) {
+  if (typeof ingestKey !== "string" || !/^[A-Za-z0-9_-]+$/.test(ingestKey)) {
     failures.push("fork/identity.json: telemetry.ingestKey must be letters, digits, - or _");
+  }
+  if (typeof privacyUrl !== "string" || !/^https:\/\/[A-Za-z0-9./_-]+$/.test(privacyUrl)) {
+    failures.push("fork/identity.json: telemetry.privacyUrl must be a plain https:// address");
   }
   edit(
     file,
@@ -338,11 +351,21 @@ function applyTelemetryDefault() {
     '\n  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(\n    Config.withDefault("https://ingest.t3.codes"),\n  ),\n',
     `\n${formattedDefault("ingestHost", "T3CODE_TELEMETRY_HOST", ingestHost)}\n`,
   );
-  // The user-facing page says where usage events go, so it must name this build's server.
+  // The user-facing page says where usage events go, so it must name this build's server and who
+  // runs it. The app's "Privacy Policy" link opens that page instead of upstream's policy, which
+  // names upstream's company as the collector.
   edit(
     "docs/user/telemetry.md",
     "The server sends usage events to `ingest.t3.codes` under",
-    `The server sends usage events to \`${ingestHost.slice("https://".length)}\` under`,
+    `The server sends usage events to \`${ingestHost.slice("https://".length)}\`, a server run by this build's maintainers (github.com/${identity.releaseRepository}), not by T3 Tools, under`,
+  );
+  edit(
+    "apps/web/src/legalLinks.ts",
+    `export const PRIVACY_POLICY_URL = "https://${UPSTREAM.domain}/privacy-policy";`,
+    // As upstream's formatter prints it: one line when it fits in 100 columns.
+    `export const PRIVACY_POLICY_URL = "${privacyUrl}";`.length <= 100
+      ? `export const PRIVACY_POLICY_URL = "${privacyUrl}";`
+      : `export const PRIVACY_POLICY_URL =\n  "${privacyUrl}";`,
   );
 }
 
@@ -431,9 +454,12 @@ function applyAgentRules() {
 }
 
 /**
- * Checks the result, not the anchors: after every edit, no shipped source may still name upstream's
- * analytics host or key. The edits above replace the one place they are today; this stops the sync
- * if upstream ever adds a second.
+ * Checks the result, not only the anchors: after every edit, no tracked file under apps/,
+ * packages/, infra/ or scripts/ may still hold upstream's analytics host or key as plain text (any
+ * letter case). The edits above replace the one place they are today; this stops the sync if
+ * upstream adds a second. It can't see a value built from parts at runtime; for the server's own
+ * defaults the test in fork/patches/analytics-defaults-test.patch covers that. Test files are
+ * skipped (they may name anything), and so are binary files and paths missing from the tree.
  */
 function checkNoUpstreamTelemetry() {
   const tracked = NodeChildProcess.execFileSync(
@@ -441,12 +467,22 @@ function checkNoUpstreamTelemetry() {
     ["ls-files", "-z", "--", "apps", "packages", "infra", "scripts"],
     { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   ).split("\0");
+  const values = [UPSTREAM.telemetryHost, UPSTREAM.telemetryKey].map((value) => ({
+    value,
+    lower: value.toLowerCase(),
+  }));
   for (const file of tracked) {
-    if (!/\.(ts|tsx|js|mjs|cjs|json|html)$/.test(file) || /\.test\.tsx?$/.test(file)) continue;
-    if (!staged.has(file) && !NodeFS.existsSync(NodePath.join(root, file))) continue;
-    const content = read(file);
-    for (const value of [UPSTREAM.telemetryHost, UPSTREAM.telemetryKey]) {
-      if (content.includes(value)) {
+    if (file === "" || /\.test\.[cm]?[jt]sx?$/.test(file)) continue;
+    let content = staged.get(file);
+    if (content === undefined) {
+      const stat = NodeFS.lstatSync(NodePath.join(root, file), { throwIfNoEntry: false });
+      if (stat === undefined || !stat.isFile()) continue;
+      content = NodeFS.readFileSync(NodePath.join(root, file), "utf8");
+      if (content.includes("\0")) continue;
+    }
+    const lower = content.toLowerCase();
+    for (const { value, lower: needle } of values) {
+      if (lower.includes(needle)) {
         failures.push(`${file}: still names upstream's analytics ${value} after the edits`);
       }
     }

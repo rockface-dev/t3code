@@ -6,7 +6,8 @@
   "telemetryEnabledByDefault": true,
   "telemetry": {
     "ingestHost": "https://ingest.shipdifferent.dev",
-    "ingestKey": "shipdifferent-app-1"
+    "ingestKey": "shipdifferent-app-1",
+    "privacyUrl": "https://github.com/rockface-dev/t3code/blob/fork/docs/user/telemetry.md"
   },
   "desktopAppId": "com.t3tools.t3code",
   "mobile": {

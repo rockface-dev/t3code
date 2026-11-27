@@ -4,7 +4,7 @@ Date: Fri, 27 Nov 2026 04:01:17 -0600
 Subject: [PATCH] server: a test that this build's analytics defaults point at
  its own ingest server
 
-Intent: fork/apply.ts gives this build its own analytics defaults: on unless the host is a CI runner or DO_NOT_TRACK is set, sent to https://ingest.shipdifferent.dev with the build's public app key. This test starts the analytics service with no settings at all and checks the one request it makes: that address, that key. It also checks nothing is sent from a CI runner or with DO_NOT_TRACK. It fails if a sync ever leaves upstream's address or key in place, or if upstream adds another place the address comes from. Changing where this build's analytics go means changing this test, on purpose.
+Intent: fork/apply.ts gives this build its own analytics defaults: on unless the host is a CI runner or DO_NOT_TRACK is set, sent to https://ingest.shipdifferent.dev with the build's public app key. This test starts the analytics service with no settings at all and checks the one request it makes: that address, that key. It also checks nothing is sent from a CI runner or with DO_NOT_TRACK. It fails if a sync leaves upstream's address or key as the service's defaults, or if the service starts taking them from somewhere else. It covers the service with no settings; a server whose environment sets its own host and key sends there, and the desktop app sends nothing while its shell discovery is pending. Changing where this build's analytics go by default, or switching the default off (fork/identity.json telemetryEnabledByDefault), means changing this test, on purpose.
 
 Kind: fork-only. A test file only; it changes no shipped code.
 
