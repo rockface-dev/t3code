@@ -124,9 +124,9 @@ Two more edits follow from these values: the server refreshes its model list fro
 `releaseRepository`'s `fork` branch (`ModelManifest.ts`), not upstream's `main`; and after every
 edit `apply.ts` checks that no tracked file under `apps/`, `packages/`, `infra/` or `scripts/`
 still holds upstream's analytics host or key as plain text, in any letter case, so a second place
-upstream adds stops the sync. That check skips test files (`*.test.*`), binary files (any NUL
-byte), symlinks and paths missing from the tree, and it cannot see a value built from parts at
-runtime.
+upstream adds stops the sync. That check skips JavaScript and TypeScript test files (`*.test.ts`,
+`*.test.tsx` and the like), binary files (any NUL byte), symlinks and paths missing from the tree,
+and it cannot see a value built from parts at runtime.
 Once `domain` is ours, nightly builds also approve agent sign-ins on `app.<domain>`
 (`publicConfig.ts`) instead of upstream's nightly app; until then that line is only checked.
 
