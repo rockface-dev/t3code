@@ -153,9 +153,11 @@ export const make = Effect.gen(function* () {
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
+  // Without a key and a host there is nowhere to send, so analytics is off.
+  const hasDestination = telemetryConfig.ingestKey !== "" && telemetryConfig.ingestHost !== "";
   // A cached PATH does not establish consent from the current login shell.
   const telemetryEnabled = Effect.suspend(() => {
-    if (!enabledAtStartup || !policyAllows || isDoNotTrackSet(hostEnvironment))
+    if (!enabledAtStartup || !policyAllows || !hasDestination || isDoNotTrackSet(hostEnvironment))
       return Effect.succeed(false);
     if (!awaitingShellConsent) return Effect.succeed(true);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
