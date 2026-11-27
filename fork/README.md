@@ -135,6 +135,9 @@ Patches (`fork/patches/`, listed in `.patches`):
 - `pair-matching-cli.patch`: when `t3 pair` finds a server on another protocol, it names the
   runtime this machine already unpacked for the server's version, or `t3 update <version>` and then
   `t3 pair`, instead of upstream's `npx t3@<version> pair` (this build has no npm package).
+- `analytics-needs-destination.patch`: while the analytics key or host is empty (this build's
+  default, see above), analytics is off: nothing is recorded, sent or retried on the machine.
+  With both set in the server's environment it works as upstream's does (still only when turned on).
 
 Everything else is configured at build or run time, without changing code:
 

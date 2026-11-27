@@ -1,3 +1,4 @@
 # The order fork/sync.sh applies these in. Written by fork/patches.sh export.
 hide-mobile-store-links.patch
 pair-matching-cli.patch
+analytics-needs-destination.patch
