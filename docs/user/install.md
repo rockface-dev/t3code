@@ -12,12 +12,12 @@ Install the `t3` command to `~/.local/bin`:
 
 ```bash
 # macOS / Linux
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/rockface-dev/t3code/fork/scripts/install.sh | sh
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm https://t3.codes/install.ps1 | iex
+irm https://raw.githubusercontent.com/rockface-dev/t3code/fork/scripts/install.ps1 | iex
 ```
 
 Set `T3CODE_CHANNEL=nightly` for nightly builds or `T3CODE_VERSION=<ver>` to pin a version. To try once without installing, run `npx t3@latest` (requires Node.js; always runs the latest stable release).
@@ -39,7 +39,7 @@ If `t3` reports a server is already running, connect with `t3 pair` or pass a se
 There is no standalone `t3` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
+git clone https://github.com/rockface-dev/t3code
 cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
